@@ -4,6 +4,7 @@ from datetime import datetime, timezone
 from urllib.parse import urljoin
 from pathlib import Path
 import re
+import json
 
 LIST_URL = "https://mydramalist.com/list/3kPbQnZ4"
 BASE_URL = "https://mydramalist.com"
@@ -22,39 +23,46 @@ def parse_list_page(html):
     soup = BeautifulSoup(html, "lxml")
     show_links = []
 
-    for a in soup.select("div.list-item a[href^='/']"):
-        href = a.get("href")
-        if href and re.match(r"^/\d+", href):
-            full = urljoin(BASE_URL, href.split("#")[0])
-            if full not in show_links:
-                show_links.append(full)
+    # Find all list items (each li.list-group-item contains one show)
+    for li in soup.find_all("li", {"class": "list-group-item"}):
+        # Get the show link from the cover image or title
+        link = li.find("a", href=re.compile(r"^/\d+"))
+        if link:
+            href = link.get("href")
+            if href and re.match(r"^/\d+-", href):
+                full = urljoin(BASE_URL, href.split("#")[0])
+                if full not in show_links:
+                    show_links.append(full)
 
     return show_links
 
-def get_text_after_label(details_soup, label):
-    """Extract text after a labeled field in the details section."""
-    for li in details_soup.select("li"):
-        label_span = li.find("span")
-        if label_span and label_span.get_text(strip=True).startswith(label):
-            text = li.get_text(" ", strip=True)
-            return text.replace(label, "").strip(": ").strip()
+def get_text_after_label(soup, label):
+    """Extract text after a labeled field in list items."""
+    for li in soup.find_all("li", {"class": "list-item"}):
+        b_tag = li.find("b")
+        if b_tag and label in b_tag.get_text(strip=True):
+            # Get all text in the li and remove the label part
+            full_text = li.get_text(strip=True)
+            label_pos = full_text.find(label)
+            if label_pos >= 0:
+                text_after = full_text[label_pos + len(label):].strip()
+                return text_after
     return None
 
-def parse_air_date(details_soup):
-    aired = get_text_after_label(details_soup, "Aired:")
-    if not aired:
-        aired = get_text_after_label(details_soup, "Airs:")
-    return aired
-
-def parse_next_episode_date(soup):
-    next_ep_text = soup.find(string=re.compile(r"Next Episode", re.I))
-    if next_ep_text:
-        nearby = next_ep_text.parent
-        if nearby:
-            text = nearby.get_text(" ", strip=True)
-            match = re.search(r"(Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec) \d{1,2}, \d{4}", text)
-            if match:
-                return match.group(0)
+def parse_next_episode_date(html):
+    """Extract next episode air date from JavaScript variable in the page."""
+    try:
+        # Look for the nextEpisodeAiring JavaScript variable
+        match = re.search(r'var nextEpisodeAiring = ({[^}]+});', html)
+        if match:
+            data = json.loads(match.group(1))
+            if 'released_at' in data:
+                timestamp = int(data['released_at'])
+                # Convert Unix timestamp to datetime
+                dt = datetime.fromtimestamp(timestamp, tz=timezone.utc)
+                return dt.strftime("%b %d, %Y")
+    except (ValueError, KeyError, json.JSONDecodeError):
+        pass
     return None
 
 def parse_show_page(url):
@@ -65,18 +73,21 @@ def parse_show_page(url):
     title = title_el.get_text(strip=True) if title_el else url
 
     poster = None
-    img = soup.select_one("img[src*='https://i.mydramalist.com']")
+    img = soup.select_one("img[src*='mydramalist.com'][class*='cover']")
     if img and img.get("src"):
         poster = img["src"]
 
-    details = soup.select_one("div.show-details, div.box")
-    country = None
-    air_date_str = None
-    if details:
-        country = get_text_after_label(details, "Country:")
-        air_date_str = parse_air_date(details)
+    country = get_text_after_label(soup, "Country:")
+    episodes = get_text_after_label(soup, "Episodes:")
+    air_date_str = get_text_after_label(soup, "Aired:")
+    next_ep_date = parse_next_episode_date(html)
+    
+    # Extract synopsis from first paragraph
+    synopsis = None
+    p = soup.find("p")
+    if p:
+        synopsis = p.get_text(strip=True)
 
-    next_ep_date = parse_next_episode_date(soup)
     countdown_str = None
     if next_ep_date:
         try:
@@ -93,7 +104,9 @@ def parse_show_page(url):
         "url": url,
         "poster": poster,
         "country": country,
+        "episodes": episodes,
         "air_date": air_date_str,
+        "synopsis": synopsis,
         "next_ep_date": next_ep_date,
         "countdown": countdown_str,
     }
@@ -120,12 +133,16 @@ def build_rss(items):
         desc_parts = []
         if it["country"]:
             desc_parts.append(f"Country: {it['country']}")
+        if it["episodes"]:
+            desc_parts.append(f"Episodes: {it['episodes']}")
         if it["air_date"]:
             desc_parts.append(f"Air Date: {it['air_date']}")
         if it["next_ep_date"]:
             desc_parts.append(f"Next Episode: {it['next_ep_date']}")
         if it["countdown"]:
             desc_parts.append(it["countdown"])
+        if it["synopsis"]:
+            desc_parts.append(f"Synopsis: {it['synopsis']}")
 
         description_html = "<br>".join(desc_parts) if desc_parts else "No additional info."
         media_tag = ""
@@ -147,7 +164,7 @@ def build_rss(items):
         "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n"
         "<rss version=\"2.0\" xmlns:media=\"http://search.yahoo.com/mrss/\">\n"
         "<channel>\n"
-        "  <title>MyDramaList BL List</title>\n"
+        "  <title>Ongoing and Upcoming BLs</title>\n"
         f"  <link>{LIST_URL}</link>\n"
         "  <description>Auto-generated feed from MyDramaList list 3kPbQnZ4</description>\n"
         f"  <lastBuildDate>{now}</lastBuildDate>\n"

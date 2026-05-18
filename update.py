@@ -73,11 +73,7 @@ def get_status(soup):
 
 def parse_next_episode_date(html):
     try:
-<<<<<<< HEAD
         match = re.search(r'var nextEpisodeAiring\s*=\s*({.*?});', html, re.DOTALL)
-=======
-        match = re.search(r'var nextEpisodeAiring = ({[^}]+});', html)
->>>>>>> b2a39162bff0523d0d08a5f1ef2f6f4d29a60ff0
         if match:
             data = json.loads(match.group(1))
             if 'released_at' in data:
@@ -117,10 +113,7 @@ def parse_show_page(url):
     episodes = get_text_after_label(soup, "Episodes:")
     air_date_str = get_text_after_label(soup, "Aired:")
     next_ep_date = parse_next_episode_date(html)
-<<<<<<< HEAD
-=======
     status = get_status(soup)
->>>>>>> b2a39162bff0523d0d08a5f1ef2f6f4d29a60ff0
 
     synopsis = None
     synopsis_selectors = [

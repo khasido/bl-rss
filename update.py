@@ -24,13 +24,10 @@ def fetch(url):
     return response.text
 
 def parse_list_page(html):
-    """Return absolute show URLs from the MDL list page."""
     soup = BeautifulSoup(html, "lxml")
     show_links = []
 
-    # Find all list items (each li.list-group-item contains one show)
     for li in soup.find_all("li", {"class": "list-group-item"}):
-        # Get the show link from the cover image or title
         link = li.find("a", href=re.compile(r"^/\d+"))
         if link:
             href = link.get("href")
@@ -59,29 +56,35 @@ def safe_text(element):
 
 
 def get_text_after_label(soup, label):
-    """Extract text after a labeled field in list items."""
     for li in soup.find_all("li", {"class": "list-item"}):
         b_tag = li.find("b")
         if b_tag and label in b_tag.get_text(strip=True):
-            # Get all text in the li and remove the label part
             full_text = li.get_text(strip=True)
             label_pos = full_text.find(label)
             if label_pos >= 0:
-                text_after = full_text[label_pos + len(label):].strip()
-                return text_after
+                return full_text[label_pos + len(label):].strip()
+    return None
+
+def get_status(soup):
+    status = get_text_after_label(soup, "Status:")
+    if status:
+        return status.lower()
     return None
 
 def parse_next_episode_date(html):
-    """Extract next episode air date from JavaScript variable in the page."""
     try:
+<<<<<<< HEAD
         match = re.search(r'var nextEpisodeAiring\s*=\s*({.*?});', html, re.DOTALL)
+=======
+        match = re.search(r'var nextEpisodeAiring = ({[^}]+});', html)
+>>>>>>> b2a39162bff0523d0d08a5f1ef2f6f4d29a60ff0
         if match:
             data = json.loads(match.group(1))
             if 'released_at' in data:
                 timestamp = int(data['released_at'])
                 dt = datetime.fromtimestamp(timestamp, tz=timezone.utc)
                 return dt.strftime("%b %d, %Y")
-    except (ValueError, KeyError, json.JSONDecodeError):
+    except:
         pass
     return None
 
@@ -114,6 +117,10 @@ def parse_show_page(url):
     episodes = get_text_after_label(soup, "Episodes:")
     air_date_str = get_text_after_label(soup, "Aired:")
     next_ep_date = parse_next_episode_date(html)
+<<<<<<< HEAD
+=======
+    status = get_status(soup)
+>>>>>>> b2a39162bff0523d0d08a5f1ef2f6f4d29a60ff0
 
     synopsis = None
     synopsis_selectors = [
@@ -139,8 +146,8 @@ def parse_show_page(url):
             delta = dt - now
             if delta.days >= 0:
                 countdown_str = f"Next episode in {delta.days} days"
-        except ValueError:
-            countdown_str = None
+        except:
+            pass
 
     return {
         "title": title,
@@ -152,6 +159,7 @@ def parse_show_page(url):
         "synopsis": synopsis,
         "next_ep_date": next_ep_date,
         "countdown": countdown_str,
+        "status": status,
     }
 
 def format_rfc2822(date_str):
@@ -164,7 +172,7 @@ def format_rfc2822(date_str):
             dt = datetime.strptime(clean_date, fmt)
             dt = dt.replace(tzinfo=timezone.utc)
             return dt.strftime("%a, %d %b %Y %H:%M:%S %z")
-        except ValueError:
+        except:
             continue
 
     return datetime.now(timezone.utc).strftime("%a, %d %b %Y %H:%M:%S %z")
@@ -178,11 +186,10 @@ def parse_sort_date(date_str):
         try:
             dt = datetime.strptime(clean_date, fmt)
             return dt.replace(tzinfo=timezone.utc)
-        except ValueError:
+        except:
             continue
 
     return None
-
 
 def image_mime_type(url):
     url = url.lower()
@@ -192,17 +199,15 @@ def image_mime_type(url):
         return "image/gif"
     return "image/jpeg"
 
-
 def build_rss(items):
     now = datetime.now(timezone.utc).strftime("%a, %d %b %Y %H:%M:%S %z")
     rss_items = []
 
     for it in items:
         desc_lines = []
+
         if it["poster"]:
-            desc_lines.append(
-                f"<img src=\"{it['poster']}\" alt=\"{it['title']} poster\" style=\"width:100%;max-width:400px;height:auto;display:block;margin-bottom:12px;\" />"
-            )
+            desc_lines.append(f"<img src=\"{it['poster']}\" alt=\"{it['title']} poster\" />")
 
         desc_lines.append(f"<strong><em>{it['title']}</em></strong>")
 
@@ -212,7 +217,7 @@ def build_rss(items):
         if it["episodes"]:
             country_episode.append(f"{it['episodes']} eps")
         if country_episode:
-            desc_lines.append(f"{', '.join(country_episode)}")
+            desc_lines.append(", ".join(country_episode))
 
         if it["air_date"]:
             desc_lines.append(f"Air Date: {it['air_date']}")
@@ -225,9 +230,10 @@ def build_rss(items):
             desc_lines.append(it["next_ep_date"])
 
         if it["synopsis"]:
-            desc_lines.append(f"<p style=\"margin:0.5em 0 0 0;\">{it['synopsis']}</p>")
+            desc_lines.append(f"<p>{it['synopsis']}</p>")
 
-        description_html = "<br>".join(desc_lines) if desc_lines else "No additional info."
+        description_html = "<br>".join(desc_lines)
+
         media_tag = ""
         enclosure_tag = ""
         if it["poster"]:
@@ -236,7 +242,10 @@ def build_rss(items):
                 f"\n    <media:content url=\"{it['poster']}\" medium=\"image\" type=\"{mime_type}\" />"
                 f"\n    <media:thumbnail url=\"{it['poster']}\" />"
             )
-            enclosure_tag = f"\n    <enclosure url=\"{it['poster']}\" type=\"{mime_type}\" />"
+            enclosure_tag = (
+                f"\n    <enclosure url=\"{it['poster']}\" "
+                f"type=\"{mime_type}\" length=\"0\" />"
+            )
 
         guid = hashlib.sha256(it['url'].encode('utf-8')).hexdigest()
         pub_date = format_rfc2822(it['air_date'] or it['next_ep_date'])
@@ -277,14 +286,25 @@ def main():
         try:
             print(f"Parsing {url}")
             data = parse_show_page(url)
-            items.append(data)
+
+            status = data.get("status", "")
+            if status not in ["completed", "finished", "ended"]:
+                items.append(data)
+
         except Exception as exc:
             print(f"Error parsing {url}: {exc}")
 
-    items.sort(key=lambda item: parse_sort_date(item['next_ep_date']) or parse_sort_date(item['air_date']) or datetime.max.replace(tzinfo=timezone.utc), reverse=True)
+    items.sort(
+        key=lambda item: parse_sort_date(item['next_ep_date'])
+        or parse_sort_date(item['air_date'])
+        or datetime.max.replace(tzinfo=timezone.utc),
+        reverse=True
+    )
+
     rss_xml = build_rss(items)
     Path("feed.xml").write_text(rss_xml, encoding="utf-8")
     print("feed.xml updated.")
 
 if __name__ == "__main__":
     main()
+

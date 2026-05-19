@@ -147,7 +147,7 @@ def post_new_items(feed_path="feed.xml", state_path=STATE_DEFAULT, webhook_env="
                         attempt += 1
                     else:
                         print(f"Failed to post {title}: {r.status_code} {r.text}")
-                        break
+                        # don't break, continue to next item
             else:
                 edit_url = f"https://discord.com/api/webhooks/{wh_id}/{wh_token}/messages/{existing_msg_id}"
                 while attempt < max_retries and not success:
@@ -179,9 +179,10 @@ def post_new_items(feed_path="feed.xml", state_path=STATE_DEFAULT, webhook_env="
                                 success = True
                             else:
                                 print(f"Repost failed: {r2.status_code} {r2.text}")
+                                # don't break, continue to next item
                         except Exception as exc:
                             print(f"Error reposting {title}: {exc}")
-                        break
+                            # don't break, continue to next item
         except Exception as exc:
             print(f"Error posting/updating {title}: {exc}")
             # continue to next item instead of breaking out

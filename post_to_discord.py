@@ -6,22 +6,13 @@ from datetime import datetime, timezone, timedelta
 
 SOFT_EMOJIS = ["🌙", "💫", "⭐", "🌸", "🕊️", "✨"]
 
-MINT_GREEN = 0xA8F0C6      # airing
-PALE_YELLOW = 0xFFF4B8     # upcoming / no date
-WEEKLY_PASTEL = 0xD9E8FF   # summary card pastel
+MINT_GREEN = 0xA8F0C6
+PALE_YELLOW = 0xFFF4B8
+WEEKLY_PASTEL = 0xD9E8FF
 
 
 def center(text):
-    """Center-align text visually (Discord does not support true centering)."""
     return text
-
-
-def clip_synopsis(text, limit=450):
-    if not text:
-        return ""
-    if len(text) <= limit:
-        return text
-    return text[:limit].rstrip() + "…"
 
 
 def build_embed(item):
@@ -32,20 +23,16 @@ def build_embed(item):
     ep_total = item["episode_count"]
     next_ep = item["next_ep_number"]
     next_date = item["next_ep_date"]
-    synopsis = clip_synopsis(item["synopsis"])
     status = item["status"]
 
-    # Determine color
-    if status in ["airing", "currently airing"]:
-        color = MINT_GREEN
-    else:
-        color = PALE_YELLOW
+    # Color
+    color = MINT_GREEN if status in ["airing", "currently airing"] else PALE_YELLOW
 
-    # Title: centered + soft emoji (no countdown)
+    # Title (centered + soft emoji)
     emoji = random.choice(SOFT_EMOJIS)
     embed_title = center(f"{title} {emoji}")
 
-    # Country tag
+    # Country flag
     flag = {
         "thailand": "🇹🇭",
         "japan": "🇯🇵",
@@ -54,59 +41,49 @@ def build_embed(item):
         "taiwan": "🇹🇼",
     }.get(country.lower() if country else "", "🌍")
 
-    country_tag = center(f"{flag} {country[:2].upper()} • {status.title()}") if country else ""
-
-    # Build fields (these appear to the right of the poster)
-    fields = []
-
-    if country:
-        fields.append({
-            "name": "🌍 Country",
-            "value": center(country),
-            "inline": False
-        })
-
-    if ep_total:
-        fields.append({
-            "name": "🎞️ Episodes",
-            "value": center(f"{ep_total} total"),
-            "inline": False
-        })
-
-    if next_ep and next_date:
-        fields.append({
-            "name": "📅 Next Episode",
-            "value": center(f"Ep {next_ep} — {next_date}"),
-            "inline": False
-        })
-
+    # Airs In
+    airs_in = "Unknown"
     if next_date:
         try:
             dt = datetime.strptime(next_date, "%b %d, %Y").replace(tzinfo=timezone.utc)
             now = datetime.now(timezone.utc)
             days = (dt - now).days
             if days >= 0:
-                fields.append({
-                    "name": "⏳ Airs In",
-                    "value": center(f"{days} days"),
-                    "inline": False
-                })
+                airs_in = f"{days} days"
         except:
             pass
 
-    fields.append({
-        "name": "📡 Status",
-        "value": center(status.title()),
-        "inline": False
-    })
+    # Build 4-column layout
+    fields = [
+        {
+            "name": "🌍 Country",
+            "value": f"{flag} {country}" if country else "—",
+            "inline": True
+        },
+        {
+            "name": "🎞️ Episodes",
+            "value": f"{ep_total}" if ep_total else "—",
+            "inline": True
+        },
+        {
+            "name": "⏳ Airs In",
+            "value": airs_in,
+            "inline": True
+        },
+        {
+            "name": "📡 Status",
+            "value": status.title(),
+            "inline": True
+        }
+    ]
 
-    # Build embed (movie-card layout)
+    # Build embed (banner poster at bottom)
     embed = {
         "title": embed_title,
-        "description": center(synopsis) if synopsis else "",
+        "description": "",  # no synopsis
         "color": color,
-        "thumbnail": {"url": poster} if poster else {},  # poster inside main embed box
         "fields": fields,
+        "image": {"url": poster} if poster else {},  # full-width banner
         "footer": {"text": "🔗 View on MDL"},
         "url": url
     }
@@ -115,7 +92,6 @@ def build_embed(item):
 
 
 def build_weekly_summary(items):
-    """Create the weekly grouped embed."""
     upcoming = []
 
     now = datetime.now(timezone.utc)
@@ -172,7 +148,6 @@ def post_new_items(feed_path):
         print("No webhook URL set.")
         return
 
-    # Post each embed
     for item in items:
         embed = build_embed(item)
         payload = {
@@ -199,7 +174,6 @@ def post_new_items(feed_path):
         }
         requests.post(webhook_url, json=payload)
 
-    # Weekly summary
     summary = build_weekly_summary(items)
     if summary:
         requests.post(webhook_url, json={"embeds": [summary]})

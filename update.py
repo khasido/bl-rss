@@ -1,7 +1,7 @@
 import hashlib
 import requests
 from bs4 import BeautifulSoup
-from datetime import datetime, timezone
+from datetime import datetime, timezone, timedelta
 from urllib.parse import urljoin
 from pathlib import Path
 from xml.sax.saxutils import escape
@@ -265,7 +265,8 @@ def image_mime_type(url):
 
 
 def build_rss(items):
-    now = datetime.now(timezone.utc).strftime("%a, %d %b %Y %H:%M:%S %z")
+    base_dt = datetime.now(timezone.utc)
+    now = base_dt.strftime("%a, %d %b %Y %H:%M:%S %z")
     rss_items = []
 
     for it in items:
@@ -323,8 +324,12 @@ def build_rss(items):
                 f"type=\"{mime_type}\" length=\"0\" />"
             )
 
-        guid = hashlib.sha256(it['url'].encode('utf-8')).hexdigest()
-        pub_date = datetime.now(timezone.utc).strftime("%a, %d %b %Y %H:%M:%S %z")
+        # assign a unique pubDate per item (decrementing by one second)
+        idx = items.index(it)
+        item_dt = base_dt - timedelta(seconds=idx)
+        pub_date = item_dt.strftime("%a, %d %b %Y %H:%M:%S %z")
+        # make guid unique per feed generation so bridges treat items as new
+        guid = hashlib.sha256(f"{it['url']}|{pub_date}".encode('utf-8')).hexdigest()
         item_xml = (
             "  <item>\n"
             f"    <title>{xml_text(it['title'])}</title>\n"

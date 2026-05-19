@@ -41,6 +41,28 @@ def _extract_meta_from_html(html, label):
     return None
 
 
+def _clean_description_html(html):
+    soup = BeautifulSoup(html, "html.parser")
+    # remove any image from description text
+    for img in soup.find_all("img"):
+        img.decompose()
+    # remove duplicate top metadata paragraphs
+    for strong_text in ("Country:", "Total Episodes:", "Next Episode:"):
+        for p in soup.find_all("p"):
+            if p.get_text(strip=True).startswith(strong_text):
+                p.decompose()
+    # remove source and view links at the end
+    for tag in soup.find_all(["a", "p"]):
+        text = tag.get_text(" ", strip=True)
+        if "View on MyDramaList" in text or "Source: MyDramaList" in text:
+            tag.decompose()
+    for p in soup.find_all("p"):
+        if not p.get_text(strip=True):
+            p.decompose()
+    cleaned = str(soup)
+    return cleaned
+
+
 def post_new_items(feed_path="feed.xml", state_path=STATE_DEFAULT, webhook_env="DISCORD_WEBHOOK_URL", sleep_seconds=1):
     webhook = os.environ.get(webhook_env)
     if not webhook:
@@ -94,7 +116,8 @@ def post_new_items(feed_path="feed.xml", state_path=STATE_DEFAULT, webhook_env="
         title = item.title.string if item.title and item.title.string else ""
         link = item.link.string if item.link and item.link.string else ""
         description_html = item.find("description").string if item.find("description") and item.find("description").string else ""
-        description_text = _html_to_text(description_html)[:2048]
+        cleaned_description_html = _clean_description_html(description_html)
+        description_text = _html_to_text(cleaned_description_html)[:2048]
         image = _extract_first_image(item)
 
         # extract metadata fields
@@ -109,7 +132,7 @@ def post_new_items(feed_path="feed.xml", state_path=STATE_DEFAULT, webhook_env="
             "fields": [],
         }
         if image:
-            embed["image"] = {"url": image}
+            embed["thumbnail"] = {"url": image}
 
         if country:
             embed["fields"].append({"name": "Country", "value": country, "inline": True})

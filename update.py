@@ -7,6 +7,7 @@ from pathlib import Path
 from xml.sax.saxutils import escape
 import re
 import json
+import time
 
 LIST_URL = "https://mydramalist.com/list/3kPbQnZ4"
 BASE_URL = "https://mydramalist.com"
@@ -19,12 +20,28 @@ HEADERS = {
     "User-Agent": "Mozilla/5.0 (compatible; BL-RSS-Bot/1.0)"
 }
 
-def fetch(url):
-    response = requests.get(url, headers=HEADERS, timeout=20)
-    response.raise_for_status()
-    return response.text
+# ---------------------------------------------------------
+# FREEZE-PROOF FETCH WITH RETRIES + TIMEOUT
+# ---------------------------------------------------------
+def fetch(url, retries=3, delay=2):
+    for attempt in range(retries):
+        try:
+            response = requests.get(url, headers=HEADERS, timeout=10)
+            response.raise_for_status()
+            return response.text
+        except Exception as exc:
+            print(f"[WARN] Fetch failed ({attempt+1}/{retries}) for {url}: {exc}")
+            time.sleep(delay)
+    print(f"[ERROR] Skipping URL after repeated failures: {url}")
+    return None
 
+# ---------------------------------------------------------
+# PARSE LIST PAGE
+# ---------------------------------------------------------
 def parse_list_page(html):
+    if not html:
+        return []
+
     soup = BeautifulSoup(html, "lxml")
     show_links = []
 
@@ -39,26 +56,14 @@ def parse_list_page(html):
 
     return show_links
 
-def parse_meta_description(soup):
-    """Try meta description fallback for show synopsis."""
-    meta = soup.find("meta", attrs={"name": "description"})
-    if meta and meta.get("content"):
-        return meta["content"].strip()
-
-    og_desc = soup.find("meta", property="og:description")
-    if og_desc and og_desc.get("content"):
-        return og_desc["content"].strip()
-
-    return None
-
-
+# ---------------------------------------------------------
+# UTILITY FUNCTIONS
+# ---------------------------------------------------------
 def safe_text(element):
     return element.get_text(" ", strip=True) if element else None
 
-
 def xml_text(value):
     return escape(str(value)) if value is not None else ""
-
 
 def get_text_after_label(soup, label):
     for li in soup.find_all("li", {"class": "list-item"}):
@@ -70,52 +75,40 @@ def get_text_after_label(soup, label):
                 return full_text[label_pos + len(label):].strip()
     return None
 
-def get_status(soup):
-    status = get_text_after_label(soup, "Status:")
-    if status:
-        return status.lower()
-    return None
-
-
 def parse_episode_count(episodes):
     if not episodes:
         return None
     match = re.search(r"(\d+)", episodes)
-    if match:
-        return int(match.group(1))
-    return None
-
+    return int(match.group(1)) if match else None
 
 def parse_next_episode_number(html):
+    if not html:
+        return None
     try:
         match = re.search(r'var nextEpisodeAiring\s*=\s*({.*?});', html, re.DOTALL)
         if match:
             data = json.loads(match.group(1))
-            if data:
-                for key in ("episode_number", "episodeNumber", "episode"):
-                    if key in data and data[key] is not None:
-                        try:
-                            return int(data[key])
-                        except (TypeError, ValueError):
-                            pass
+            for key in ("episode_number", "episodeNumber", "episode"):
+                if key in data and data[key] is not None:
+                    return int(data[key])
     except:
         pass
     return None
 
-
 def parse_next_episode_date(html):
+    if not html:
+        return None
     try:
         match = re.search(r'var nextEpisodeAiring\s*=\s*({.*?});', html, re.DOTALL)
         if match:
             data = json.loads(match.group(1))
-            if 'released_at' in data:
-                timestamp = int(data['released_at'])
+            if "released_at" in data:
+                timestamp = int(data["released_at"])
                 dt = datetime.fromtimestamp(timestamp, tz=timezone.utc)
                 return dt.strftime("%b %d, %Y")
     except:
         pass
     return None
-
 
 def parse_json_ld_description(soup):
     for script in soup.find_all("script", type="application/ld+json"):
@@ -126,10 +119,8 @@ def parse_json_ld_description(soup):
         except json.JSONDecodeError:
             continue
 
-        if isinstance(data, dict):
-            description = data.get("description")
-            if description:
-                return description.strip()
+        if isinstance(data, dict) and data.get("description"):
+            return data["description"].strip()
 
         if isinstance(data, list):
             for item in data:
@@ -137,16 +128,15 @@ def parse_json_ld_description(soup):
                     return item["description"].strip()
     return None
 
-
 def parse_synopsis(soup):
-    synopsis_selectors = [
+    selectors = [
         "div.show-synopsis",
         "div.storyline",
         "div.synopsis",
         "section.show__description",
         "div.content",
     ]
-    for selector in synopsis_selectors:
+    for selector in selectors:
         section = soup.select_one(selector)
         if section:
             for ui_node in section.select("a.text-primary, ul.mdl-synopsis-languages"):
@@ -155,28 +145,30 @@ def parse_synopsis(soup):
             paragraphs = [p.get_text(" ", strip=True) for p in section.find_all("p") if p.get_text(strip=True)]
             if paragraphs:
                 return "\n\n".join(paragraphs[:2])
+
             text = section.get_text(" ", strip=True)
             if text:
                 return text
     return None
 
-
+# ---------------------------------------------------------
+# PARSE SHOW PAGE
+# ---------------------------------------------------------
 def parse_show_page(url):
     html = fetch(url)
+    if not html:
+        return None
+
     soup = BeautifulSoup(html, "lxml")
 
-    title = None
+    # Title
     title_el = soup.find("h1")
-    if title_el:
-        title = safe_text(title_el)
-    else:
-        og_title = soup.find("meta", property="og:title")
-        if og_title and og_title.get("content"):
-            title = og_title["content"].strip()
-
+    title = safe_text(title_el) if title_el else None
     if not title:
-        title = url
+        og_title = soup.find("meta", property="og:title")
+        title = og_title["content"].strip() if og_title else url
 
+    # Poster
     poster = None
     for selector in ("img.cover", "img[src*='mydramalist.com']", "img[src*='mydramalist']"):
         img = soup.select_one(selector)
@@ -192,24 +184,13 @@ def parse_show_page(url):
     air_date_str = get_text_after_label(soup, "Aired:")
     next_ep_date = parse_next_episode_date(html)
     next_ep_number = parse_next_episode_number(html)
-    status = get_status(soup)
 
-    synopsis = parse_synopsis(soup)
-    if not synopsis:
-        synopsis = parse_json_ld_description(soup)
-    if not synopsis:
-        synopsis = parse_meta_description(soup)
+    # Status
+    status = get_text_after_label(soup, "Status:")
+    status = status.lower() if status else None
 
-    countdown_str = None
-    if next_ep_date:
-        try:
-            dt = datetime.strptime(next_ep_date, "%b %d, %Y").replace(tzinfo=timezone.utc)
-            now = datetime.now(timezone.utc)
-            delta = dt - now
-            if delta.days >= 0:
-                countdown_str = f"Next episode in {delta.days} days"
-        except:
-            pass
+    # Synopsis
+    synopsis = parse_synopsis(soup) or parse_json_ld_description(soup)
 
     return {
         "title": title,
@@ -222,39 +203,49 @@ def parse_show_page(url):
         "synopsis": synopsis,
         "next_ep_date": next_ep_date,
         "next_ep_number": next_ep_number,
-        "countdown": countdown_str,
         "status": status,
     }
 
-def format_rfc2822(date_str):
-    if not date_str:
-        return datetime.now(timezone.utc).strftime("%a, %d %b %Y %H:%M:%S %z")
-
-    clean_date = re.split(r"\s*[-–]\s*", date_str)[0].strip()
-    for fmt in ("%b %d, %Y", "%b %Y", "%Y"):
-        try:
-            dt = datetime.strptime(clean_date, fmt)
-            dt = dt.replace(tzinfo=timezone.utc)
-            return dt.strftime("%a, %d %b %Y %H:%M:%S %z")
-        except:
-            continue
-
-    return datetime.now(timezone.utc).strftime("%a, %d %b %Y %H:%M:%S %z")
-
+# ---------------------------------------------------------
+# SORTING LOGIC (CHRONOLOGICAL + ALPHABETICAL)
+# ---------------------------------------------------------
 def parse_sort_date(date_str):
     if not date_str:
         return None
 
-    clean_date = re.split(r"\s*[-–]\s*", date_str)[0].strip()
+    clean = re.split(r"\s*[-–]\s*", date_str)[0].strip()
     for fmt in ("%b %d, %Y", "%b %Y", "%Y"):
         try:
-            dt = datetime.strptime(clean_date, fmt)
-            return dt.replace(tzinfo=timezone.utc)
+            return datetime.strptime(clean, fmt).replace(tzinfo=timezone.utc)
         except:
             continue
-
     return None
 
+def sort_key(item):
+    # 1. Full date > month-year > year > no date
+    d1 = parse_sort_date(item["next_ep_date"])
+    d2 = parse_sort_date(item["air_date"])
+
+    date = d1 or d2
+
+    # Items with no date go last
+    if not date:
+        return (3, datetime.max, item["title"].lower())
+
+    # Items with only year
+    if re.fullmatch(r"\d{4}", item["next_ep_date"] or item["air_date"] or ""):
+        return (2, date, item["title"].lower())
+
+    # Items with month-year only
+    if re.fullmatch(r"[A-Za-z]{3} \d{4}", item["next_ep_date"] or item["air_date"] or ""):
+        return (1, date, item["title"].lower())
+
+    # Full date
+    return (0, date, item["title"].lower())
+
+# ---------------------------------------------------------
+# BUILD RSS
+# ---------------------------------------------------------
 def image_mime_type(url):
     url = url.lower()
     if url.endswith(".png"):
@@ -263,80 +254,60 @@ def image_mime_type(url):
         return "image/gif"
     return "image/jpeg"
 
-
 def build_rss(items):
     base_dt = datetime.now(timezone.utc)
     now = base_dt.strftime("%a, %d %b %Y %H:%M:%S %z")
     rss_items = []
 
-    for it in items:
+    for idx, it in enumerate(items):
         desc_lines = []
 
         if it["poster"]:
             desc_lines.append(
-                f"<p><img src=\"{it['poster']}\" alt=\"{it['title']} poster\" style=\"width:100%;max-width:700px;height:auto;border:0;display:block;margin:0 0 1em;\" /></p>"
+                f"<p><img src=\"{it['poster']}\" alt=\"{it['title']} poster\" "
+                f"style=\"width:100%;max-width:700px;height:auto;border:0;display:block;margin:0 0 1em;\" /></p>"
             )
 
         if it["country"]:
-            desc_lines.append(
-                f"<p style=\"margin:0 0 0.6em 0;color:#333;line-height:1.5;\"><strong>Country:</strong> {escape(it['country'])}</p>"
-            )
+            desc_lines.append(f"<p><strong>Country:</strong> {escape(it['country'])}</p>")
 
         if it.get("episode_count") is not None:
-            desc_lines.append(
-                f"<p style=\"margin:0 0 0.6em 0;color:#333;line-height:1.5;\"><strong>Total Episodes:</strong> {it['episode_count']}</p>"
-            )
+            desc_lines.append(f"<p><strong>Total Episodes:</strong> {it['episode_count']}</p>")
 
-        next_episode_line = None
         if it.get("next_ep_date"):
-            episode_number = it.get("next_ep_number")
-            total_episodes = it.get("episode_count")
-            if episode_number and total_episodes:
-                next_episode_line = (
-                    f"<strong>Next Episode:</strong> {episode_number} of {total_episodes} {escape(it['next_ep_date'])}"
+            ep = it.get("next_ep_number")
+            total = it.get("episode_count")
+            if ep and total:
+                desc_lines.append(
+                    f"<p><strong>Next Episode:</strong> {ep} of {total} — {escape(it['next_ep_date'])}</p>"
                 )
             else:
-                next_episode_line = (
-                    f"<strong>Next Episode:</strong> {escape(it['next_ep_date'])}"
+                desc_lines.append(
+                    f"<p><strong>Next Episode:</strong> {escape(it['next_ep_date'])}</p>"
                 )
 
-        if next_episode_line:
-            desc_lines.append(
-                f"<p style=\"margin:0 0 0.6em 0;color:#333;line-height:1.5;\">{next_episode_line}</p>"
-            )
-
         if it["synopsis"]:
-            synopsis_html = escape(it["synopsis"]).replace("\n\n", "<br><br>")
-            desc_lines.append(
-                f"<p style=\"margin:0 0 0.6em 0;color:#333;line-height:1.5;\">{synopsis_html}</p>"
-            )
+            syn = escape(it["synopsis"]).replace("\n\n", "<br><br>")
+            desc_lines.append(f"<p>{syn}</p>")
 
-        desc_lines.append(
-            f"<p style=\"margin:0;color:#555;line-height:1.5;\"><a href=\"{it['url']}\" style=\"color:#1a0dab;\">View on MyDramaList</a></p>"
-        )
+        desc_lines.append(f"<p><a href=\"{it['url']}\">View on MyDramaList</a></p>")
 
         description_html = "\n".join(desc_lines)
 
         enclosure_tag = ""
         if it["poster"]:
-            mime_type = image_mime_type(it["poster"])
-            enclosure_tag = (
-                f"\n    <enclosure url=\"{it['poster']}\" "
-                f"type=\"{mime_type}\" length=\"0\" />"
-            )
+            mime = image_mime_type(it["poster"])
+            enclosure_tag = f"\n    <enclosure url=\"{it['poster']}\" type=\"{mime}\" length=\"0\" />"
 
-        # assign a unique pubDate per item (decrementing by one second)
-        idx = items.index(it)
-        item_dt = base_dt - timedelta(seconds=idx)
-        pub_date = item_dt.strftime("%a, %d %b %Y %H:%M:%S %z")
-        # use a stable guid per show (based on its URL) so we can update existing posts
-        guid = hashlib.sha256(it['url'].encode('utf-8')).hexdigest()
+        pub_date = (base_dt - timedelta(seconds=idx)).strftime("%a, %d %b %Y %H:%M:%S %z")
+        guid = hashlib.sha256(it["url"].encode("utf-8")).hexdigest()
+
         item_xml = (
             "  <item>\n"
             f"    <title>{xml_text(it['title'])}</title>\n"
             f"    <link>{xml_text(it['url'])}</link>\n"
             f"    <guid isPermaLink=\"false\">{guid}</guid>\n"
-            f"    <pubDate>{xml_text(pub_date)}</pubDate>\n"
+            f"    <pubDate>{pub_date}</pubDate>\n"
             f"    <description><![CDATA[{description_html}]]></description>\n"
             f"    <content:encoded><![CDATA[{description_html}]]></content:encoded>\n"
             f"{enclosure_tag}\n"
@@ -344,10 +315,10 @@ def build_rss(items):
         )
         rss_items.append(item_xml)
 
-    rss_body = "\n".join(rss_items)
     channel_header = (
         "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n"
-        "<rss version=\"2.0\" xmlns:media=\"http://search.yahoo.com/mrss/\" xmlns:content=\"http://purl.org/rss/1.0/modules/content/\">\n"
+        "<rss version=\"2.0\" xmlns:media=\"http://search.yahoo.com/mrss/\" "
+        "xmlns:content=\"http://purl.org/rss/1.0/modules/content/\">\n"
         "<channel>\n"
         f"  <title>{FEED_TITLE}</title>\n"
         f"  <link>{FEED_LINK}</link>\n"
@@ -357,46 +328,43 @@ def build_rss(items):
         f"  <lastBuildDate>{now}</lastBuildDate>\n"
     )
 
-    return f"{channel_header}{rss_body}\n</channel>\n</rss>\n"
+    return f"{channel_header}{''.join(rss_items)}\n</channel>\n</rss>\n"
 
+# ---------------------------------------------------------
+# MAIN
+# ---------------------------------------------------------
 def main():
     list_html = fetch(LIST_URL)
     show_urls = parse_list_page(list_html)[:MAX_ITEMS]
 
     items = []
     for url in show_urls:
-        try:
-            print(f"Parsing {url}")
-            data = parse_show_page(url)
+        print(f"Parsing {url}")
+        data = parse_show_page(url)
+        if not data:
+            continue
 
-            status = data.get("status", "")
-            if status not in ["completed", "finished", "ended"]:
-                items.append(data)
+        # Skip completed/ended shows
+        if data.get("status") in ["completed", "finished", "ended"]:
+            continue
 
-        except Exception as exc:
-            print(f"Error parsing {url}: {exc}")
+        items.append(data)
 
-    items.sort(
-        key=lambda item: parse_sort_date(item['next_ep_date'])
-        or parse_sort_date(item['air_date'])
-        or datetime.max.replace(tzinfo=timezone.utc),
-        reverse=True
-    )
+    # Sort using the multi-tiered key
+    items.sort(key=sort_key, reverse=True)
 
     rss_xml = build_rss(items)
     Path("feed.xml").write_text(rss_xml, encoding="utf-8")
     print("feed.xml updated.")
-    # try posting to Discord if webhook is configured
+
+    # Optional Discord posting
     try:
         import os
         if os.environ.get("DISCORD_WEBHOOK_URL"):
-            try:
-                from post_to_discord import post_new_items
-                post_new_items("feed.xml")
-            except Exception as exc:
-                print(f"Error posting to Discord: {exc}")
-    except Exception:
-        pass
+            from post_to_discord import post_new_items
+            post_new_items("feed.xml")
+    except Exception as exc:
+        print(f"Error posting to Discord: {exc}")
 
 if __name__ == "__main__":
     main()

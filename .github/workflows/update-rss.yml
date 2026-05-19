@@ -1,5 +1,8 @@
 name: Update RSS Feed
 
+permissions:
+  contents: write
+
 on:
   schedule:
     # every 6 minutes
@@ -39,7 +42,7 @@ jobs:
           git add feed.xml posted.json || true
           if ! git diff --staged --quiet; then
             git commit -m "Update feed and posted state [skip ci]" || true
-            git push
+            git push || true
           else
             echo "No changes to commit"
           fi

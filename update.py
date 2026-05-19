@@ -290,13 +290,17 @@ def build_rss(items):
             episode_number = it.get("next_ep_number")
             total_episodes = it.get("episode_count")
             if episode_number and total_episodes:
-                next_episode_line = f"Next Episode: {episode_number} of {total_episodes} {it['next_ep_date']}"
+                next_episode_line = (
+                    f"<strong>Next Episode:</strong> {episode_number} of {total_episodes} {escape(it['next_ep_date'])}"
+                )
             else:
-                next_episode_line = f"Next Episode: {it['next_ep_date']}"
+                next_episode_line = (
+                    f"<strong>Next Episode:</strong> {escape(it['next_ep_date'])}"
+                )
 
         if next_episode_line:
             desc_lines.append(
-                f"<p style=\"margin:0 0 0.6em 0;color:#333;line-height:1.5;\">{escape(next_episode_line)}</p>"
+                f"<p style=\"margin:0 0 0.6em 0;color:#333;line-height:1.5;\">{next_episode_line}</p>"
             )
 
         if it["synopsis"]:

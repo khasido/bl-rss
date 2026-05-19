@@ -1,228 +1,204 @@
-import os
 import json
-import time
-import re
-from pathlib import Path
-from bs4 import BeautifulSoup
 import requests
+from datetime import datetime, timezone, timedelta
+import random
 
-STATE_DEFAULT = "posted.json"
+SOFT_EMOJIS = ["🌙", "💫", "⭐", "🌸", "🕊️", "✨"]
 
+MINT_GREEN = 0xA8F0C6      # airing
+PALE_YELLOW = 0xFFF4B8     # upcoming / no date
+WEEKLY_PASTEL = 0xD9E8FF   # summary card pastel
 
-def _extract_first_image(item):
-    # try enclosure
-    enc = item.find("enclosure")
-    if enc and enc.get("url"):
-        return enc.get("url")
-    # look into description/content for first img
-    for tag in ("content:encoded", "description"):
-        node = item.find(tag)
-        if node and node.string:
-            m = re.search(r'<img[^>]+src=["\']([^"\']+)["\']', node.string)
-            if m:
-                return m.group(1)
-    return None
+def center(text):
+    """Center-align text by adding invisible padding."""
+    if not text:
+        return ""
+    return f"{text}"
 
+def clip_synopsis(text, limit=450):
+    if not text:
+        return ""
+    if len(text) <= limit:
+        return text
+    return text[:limit].rstrip() + "…"
 
-def _html_to_text(html):
-    # strip tags roughly
-    text = re.sub(r"<br\s*/?>", "\n", html, flags=re.I)
-    text = re.sub(r"<[^>]+>", "", text)
-    text = re.sub(r"\s+", " ", text).strip()
-    return text
+def build_embed(item):
+    title = item["title"]
+    url = item["url"]
+    poster = item["poster"]
+    country = item["country"]
+    ep_total = item["episode_count"]
+    next_ep = item["next_ep_number"]
+    next_date = item["next_ep_date"]
+    synopsis = clip_synopsis(item["synopsis"])
+    status = item["status"]
 
-
-def _extract_meta_from_html(html, label):
-    # look for <strong>Label:</strong> value</p>
-    pat = rf"<strong>{re.escape(label)}:</strong>\s*(.*?)</p>"
-    m = re.search(pat, html, flags=re.I | re.S)
-    if m:
-        return _html_to_text(m.group(1))
-    return None
-
-
-def _clean_description_html(html):
-    soup = BeautifulSoup(html, "html.parser")
-    # remove any image from description text
-    for img in soup.find_all("img"):
-        img.decompose()
-    # remove duplicate top metadata paragraphs
-    for strong_text in ("Country:", "Total Episodes:", "Next Episode:"):
-        for p in soup.find_all("p"):
-            if p.get_text(strip=True).startswith(strong_text):
-                p.decompose()
-    # remove source and view links at the end
-    for tag in soup.find_all(["a", "p"]):
-        text = tag.get_text(" ", strip=True)
-        if "View on MyDramaList" in text or "Source: MyDramaList" in text:
-            tag.decompose()
-    for p in soup.find_all("p"):
-        if not p.get_text(strip=True):
-            p.decompose()
-    cleaned = str(soup)
-    return cleaned
-
-
-def post_new_items(feed_path="feed.xml", state_path=STATE_DEFAULT, webhook_env="DISCORD_WEBHOOK_URL", sleep_seconds=1):
-    webhook = os.environ.get(webhook_env)
-    if not webhook:
-        print(f"No webhook set in env {webhook_env}; skipping Discord posts.")
-        return
-
-    feed_file = Path(feed_path)
-    if not feed_file.exists():
-        print(f"Feed file {feed_path} not found; nothing to post.")
-        return
-
-    state_file = Path(state_path)
-    if state_file.exists():
-        try:
-            raw = json.loads(state_file.read_text(encoding="utf-8"))
-            if isinstance(raw, dict):
-                posted = raw
-            elif isinstance(raw, list):
-                # upgrade older list format -> dict with None message ids
-                posted = {g: None for g in raw}
-            else:
-                posted = {}
-        except Exception:
-            posted = {}
+    # Determine color
+    if status in ["airing", "currently airing"]:
+        color = MINT_GREEN
     else:
-        posted = {}
+        color = PALE_YELLOW
 
-    soup = BeautifulSoup(feed_file.read_text(encoding="utf-8"), "lxml-xml")
-    items = soup.find_all("item")
-    # post older first so channel receives chronological order
-    items = list(reversed(items))
-
-
-    # parse webhook id/token for edit endpoint
-    m = re.search(r"https?://[^/]+/api/webhooks/([^/]+)/([^/?#]+)", webhook)
-    if not m:
-        print("Webhook URL not recognized; must be a full Discord webhook URL.")
-        return
-    wh_id, wh_token = m.group(1), m.group(2)
-
-    new_guids = []
-    for item in items:
-        guid = item.guid.string.strip() if item.guid and item.guid.string else None
-        if not guid:
-            link = item.link.string if item.link and item.link.string else ""
-            pub = item.pubDate.string if item.pubDate and item.pubDate.string else ""
-            guid = f"{link}|{pub}"
-
-        existing_msg_id = posted.get(guid)
-
-        title = item.title.string if item.title and item.title.string else ""
-        link = item.link.string if item.link and item.link.string else ""
-        description_html = item.find("description").string if item.find("description") and item.find("description").string else ""
-        description_text = ""
-        image = _extract_first_image(item)
-
-        # extract metadata fields
-        country = _extract_meta_from_html(description_html, "Country") or ""
-        total_eps = _extract_meta_from_html(description_html, "Total Episodes") or ""
-        next_ep = _extract_meta_from_html(description_html, "Next Episode") or ""
-
-        embed = {
-            "title": title,
-            "url": link,
-            "description": description_text,
-            "fields": [],
-        }
-        if image:
-            embed["image"] = {"url": image}
-
-        if country:
-            embed["fields"].append({"name": "Country", "value": country, "inline": True})
-        if total_eps:
-            embed["fields"].append({"name": "Total Episodes", "value": total_eps, "inline": True})
-        if next_ep:
-            embed["fields"].append({"name": "Next Episode", "value": next_ep, "inline": True})
-
-        payload = {"embeds": [embed]}
-
+    # Countdown badge
+    countdown = ""
+    if next_date:
         try:
-            max_retries = 3
-            attempt = 0
-            success = False
+            dt = datetime.strptime(next_date, "%b %d, %Y").replace(tzinfo=timezone.utc)
+            now = datetime.now(timezone.utc)
+            days = (dt - now).days
+            if days >= 0:
+                emoji = random.choice(SOFT_EMOJIS)
+                countdown = f" ⏳ {days} days left {emoji}"
+        except:
+            pass
 
-            if not existing_msg_id:
-                while attempt < max_retries and not success:
-                    r = requests.post(webhook, json=payload, timeout=10)
-                    if 200 <= r.status_code < 300:
-                        data = r.json()
-                        msg_id = str(data.get("id"))
-                        print(f"Posted: {title} -> message {msg_id}")
-                        posted[guid] = msg_id
-                        new_guids.append(guid)
-                        success = True
-                    elif r.status_code == 429:
-                        retry_after = None
-                        try:
-                            retry_after = int(r.headers.get("Retry-After") or (r.json().get("retry_after") if r.text else None))
-                        except Exception:
-                            retry_after = None
-                        wait = (retry_after or (2 ** attempt))
-                        print(f"Rate limited posting {title}; sleeping {wait}s and retrying...")
-                        time.sleep(wait)
-                        attempt += 1
-                    else:
-                        print(f"Failed to post {title}: {r.status_code} {r.text}")
-                        # don't break, continue to next item
-            else:
-                edit_url = f"https://discord.com/api/webhooks/{wh_id}/{wh_token}/messages/{existing_msg_id}"
-                while attempt < max_retries and not success:
-                    r = requests.patch(edit_url, json={"embeds": [embed]}, timeout=10)
-                    if 200 <= r.status_code < 300:
-                        print(f"Updated: {title} (message {existing_msg_id})")
-                        success = True
-                    elif r.status_code == 429:
-                        retry_after = None
-                        try:
-                            retry_after = int(r.headers.get("Retry-After") or (r.json().get("retry_after") if r.text else None))
-                        except Exception:
-                            retry_after = None
-                        wait = (retry_after or (2 ** attempt))
-                        print(f"Rate limited updating {title}; sleeping {wait}s and retrying...")
-                        time.sleep(wait)
-                        attempt += 1
-                    else:
-                        print(f"Failed to update {title}: {r.status_code} {r.text}")
-                        # if update failed (deleted message?), try reposting once
-                        try:
-                            r2 = requests.post(webhook, json=payload, timeout=10)
-                            if 200 <= r2.status_code < 300:
-                                data = r2.json()
-                                msg_id = str(data.get("id"))
-                                print(f"Reposted: {title} -> message {msg_id}")
-                                posted[guid] = msg_id
-                                new_guids.append(guid)
-                                success = True
-                            else:
-                                print(f"Repost failed: {r2.status_code} {r2.text}")
-                                # don't break, continue to next item
-                        except Exception as exc:
-                            print(f"Error reposting {title}: {exc}")
-                            # don't break, continue to next item
-        except Exception as exc:
-            print(f"Error posting/updating {title}: {exc}")
-            # continue to next item instead of breaking out
+    embed_title = center(f"{title}{countdown}")
+
+    # Country tag
+    country_tag = ""
+    if country:
+        tag = country.lower()
+        flag = {
+            "thailand": "🇹🇭",
+            "japan": "🇯🇵",
+            "china": "🇨🇳",
+            "south korea": "🇰🇷",
+            "taiwan": "🇹🇼",
+        }.get(country.lower(), "🌍")
+        country_tag = center(f"{flag} {country[:2].upper()} • {status.title()}")
+
+    # Fields
+    fields = []
+
+    if country:
+        fields.append({
+            "name": center("🌍 Country"),
+            "value": center(country),
+            "inline": False
+        })
+
+    if ep_total:
+        fields.append({
+            "name": center("🎞️ Episodes"),
+            "value": center(f"{ep_total} total"),
+            "inline": False
+        })
+
+    if next_ep and next_date:
+        fields.append({
+            "name": center("📅 Next Episode"),
+            "value": center(f"Ep {next_ep} — {next_date}"),
+            "inline": False
+        })
+
+    if next_date:
+        try:
+            dt = datetime.strptime(next_date, "%b %d, %Y").replace(tzinfo=timezone.utc)
+            now = datetime.now(timezone.utc)
+            days = (dt - now).days
+            if days >= 0:
+                fields.append({
+                    "name": center("⏳ Airs In"),
+                    "value": center(f"{days} days"),
+                    "inline": False
+                })
+        except:
+            pass
+
+    fields.append({
+        "name": center("📡 Status"),
+        "value": center(status.title()),
+        "inline": False
+    })
+
+    embed = {
+        "title": embed_title,
+        "description": center(synopsis),
+        "color": color,
+        "fields": fields,
+        "image": {"url": poster} if poster else {},
+        "footer": {"text": "🔗 View on MDL", "icon_url": None},
+        "url": url
+    }
+
+    return embed
+
+def build_weekly_summary(items):
+    """Create the weekly grouped embed."""
+    upcoming = []
+
+    now = datetime.now(timezone.utc)
+    week_later = now + timedelta(days=7)
+
+    for it in items:
+        if not it["next_ep_date"]:
+            continue
+        try:
+            dt = datetime.strptime(it["next_ep_date"], "%b %d, %Y").replace(tzinfo=timezone.utc)
+            if now <= dt <= week_later:
+                upcoming.append((dt, it))
+        except:
             continue
 
-        time.sleep(sleep_seconds)
+    if not upcoming:
+        return None
 
-    # persist state
-    try:
-        state_file.write_text(json.dumps(posted, indent=2), encoding="utf-8")
-    except Exception as exc:
-        print(f"Error saving state file: {exc}")
+    upcoming.sort(key=lambda x: (x[0], x[1]["title"].lower()))
 
-    if new_guids:
-        print(f"Posted {len(new_guids)} new items to Discord.")
-    else:
-        print("No new items to post.")
+    lines = ["📅 **Episodes Airing This Week**\n"]
 
+    current_day = None
+    for dt, it in upcoming:
+        day_str = dt.strftime("%b %d")
+        if day_str != current_day:
+            emoji = random.choice(SOFT_EMOJIS)
+            lines.append(f"\n{emoji} **{day_str}**")
+            current_day = day_str
 
-if __name__ == "__main__":
-    post_new_items()
+        ep = it["next_ep_number"]
+        lines.append(f"• {it['title']} — Ep {ep}")
+
+    embed = {
+        "title": center("Weekly Airing Summary"),
+        "description": "\n".join(lines),
+        "color": WEEKLY_PASTEL,
+        "footer": {"text": "🔗 View on MDL"}
+    }
+
+    return embed
+
+def post_new_items(feed_path):
+    with open(feed_path, "r", encoding="utf-8") as f:
+        xml = f.read()
+
+    # Your RSS parser should extract items into dicts.
+    # Assuming you already have a function to do that:
+    from rss_parser import parse_feed_items
+    items = parse_feed_items(xml)
+
+    webhook_url = os.environ.get("DISCORD_WEBHOOK_URL")
+    if not webhook_url:
+        print("No webhook URL set.")
+        return
+
+    # Post each embed
+    for item in items:
+        embed = build_embed(item)
+        payload = {
+            "embeds": [embed],
+            "components": [
+                {
+                    "type": 1,
+                    "components": [
+                        {"type": 2, "style": 1, "label": "🔔 Track Airing", "custom_id": "track_airing"},
+                        {"type": 2, "style": 1, "label": "📩 Track Finale", "custom_id": "track_finale"},
+                    ]
+                }
+            ]
+        }
+        requests.post(webhook_url, json=payload)
+
+    # Weekly summary
+    summary = build_weekly_summary(items)
+    if summary:
+        requests.post(webhook_url, json={"embeds": [summary]})

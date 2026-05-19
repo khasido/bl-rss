@@ -1,22 +1,15 @@
 # update.py
-from pathlib import Path
-import json
 import os
+from pathlib import Path
 from datetime import datetime
 
 from tmdb_fetcher import fetch_bl_items, fetch_gl_items
 from rss_builder import build_rss
-from state_manager import load_state, save_state, has_changed
-
-def load_blacklist():
-    path = Path("data/blacklist.json")
-    if not path.exists():
-        return {"BL": [], "GL": []}
-    data = json.loads(path.read_text(encoding="utf-8"))
-    return {
-        "BL": [t.lower() for t in data.get("BL", [])],
-        "GL": [t.lower() for t in data.get("GL", [])]
-    }
+from state_manager import (
+    load_state, save_state, has_changed,
+    update_state_entry, get_message_id, remove_entry
+)
+from post_to_discord import post_or_update
 
 def sort_key(item):
     if item["next_ep_date"]:
@@ -28,61 +21,46 @@ def sort_key(item):
         dt = datetime.max
     return (dt, item["title"].lower())
 
+def process_feed(items, state, webhook_url, state_path):
+    # Sort items
+    items.sort(key=sort_key)
+
+    # Track which IDs still exist
+    current_ids = set(str(it["id"]) for it in items)
+
+    # Remove old entries
+    for old_id in list(state["items"].keys()):
+        if old_id not in current_ids:
+            msg_id = state["items"][old_id].get("discord_message_id")
+            if msg_id:
+                from post_to_discord import discord_delete
+                discord_delete(webhook_url, msg_id)
+            remove_entry(state, old_id)
+
+    # Process each item
+    for it in items:
+        sid = str(it["id"])
+        changed = has_changed(state, it)
+        msg_id = get_message_id(state, sid)
+
+        if msg_id is None or changed:
+            new_id = post_or_update(it, webhook_url, msg_id)
+            update_state_entry(state, it, new_id)
+
+    save_state(state_path, state)
+
 def main():
-    blacklist = load_blacklist()
+    bl_webhook = os.getenv("DISCORD_WEBHOOK_BL")
+    gl_webhook = os.getenv("DISCORD_WEBHOOK_GL")
 
-    bl_items_raw = fetch_bl_items()
-    gl_items_raw = fetch_gl_items()
-
-    bl_items = [
-        it for it in bl_items_raw
-        if it["title"].lower() not in blacklist["BL"]
-    ]
-    gl_items = [
-        it for it in gl_items_raw
-        if it["title"].lower() not in blacklist["GL"]
-    ]
-
-    bl_items.sort(key=sort_key)
-    gl_items.sort(key=sort_key)
+    bl_items = fetch_bl_items()
+    gl_items = fetch_gl_items()
 
     bl_state = load_state("state_bl.json")
     gl_state = load_state("state_gl.json")
 
-    changed_bl = [it for it in bl_items if has_changed(bl_state, it)]
-    changed_gl = [it for it in gl_items if has_changed(gl_state, it)]
-
-    rss_bl = build_rss(
-        bl_items,
-        title="BL Updates (TMDB)",
-        description="Auto-generated BL feed from TMDB",
-        link="https://www.themoviedb.org"
-    )
-    rss_gl = build_rss(
-        gl_items,
-        title="GL Updates (TMDB)",
-        description="Auto-generated GL feed from TMDB",
-        link="https://www.themoviedb.org"
-    )
-
-    Path("feed_bl.xml").write_text(rss_bl, encoding="utf-8")
-    Path("feed_gl.xml").write_text(rss_gl, encoding="utf-8")
-
-    save_state("state_bl.json", bl_state)
-    save_state("state_gl.json", gl_state)
-
-    try:
-        bl_webhook = os.environ.get("DISCORD_WEBHOOK_BL")
-        gl_webhook = os.environ.get("DISCORD_WEBHOOK_GL")
-
-        if changed_bl and bl_webhook:
-                post_new_items("feed_bl.xml", bl_webhook)
-
-        if changed_gl and gl_webhook:
-                post_new_items("feed_gl.xml", gl_webhook)
-
-    except Exception as exc:
-        print(f"Error posting to Discord: {exc}")
+    process_feed(bl_items, bl_state, bl_webhook, "state_bl.json")
+    process_feed(gl_items, gl_state, gl_webhook, "state_gl.json")
 
 if __name__ == "__main__":
     main()

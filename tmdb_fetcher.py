@@ -8,12 +8,17 @@ BASE_URL = "https://api.themoviedb.org/3"
 
 SESSION = requests.Session()
 SESSION.headers.update({"Accept": "application/json"})
+PRIORITY_COUNTRIES = ["TH", "JP", "KR", "CN", "TW", "PH", "VN", "HK", "MY"]
 
 # ----------------------------------------
-# FIXES APPLIED:
-# - timeout increased to 30s
-# - retry logic (5 attempts)
-# - 0.3s delay between calls
+# TMDB keyword IDs
+# ----------------------------------------
+
+BL_KEYWORDS = "210024,158718,210025,210026"  # BL, gay romance, fudanshi, fujoshi
+GL_KEYWORDS = "12377,210027"  # lesbian, GL
+
+# ----------------------------------------
+# Robust TMDB GET with retries + timeout
 # ----------------------------------------
 
 def tmdb_get(path, **params):
@@ -24,18 +29,17 @@ def tmdb_get(path, **params):
             resp = SESSION.get(
                 f"{BASE_URL}{path}",
                 params=params,
-                timeout=30  # FIX 1: longer timeout
+                timeout=30
             )
             resp.raise_for_status()
             return resp.json()
 
-        except Exception as e:
+        except Exception:
             if attempt == 4:
-                raise  # final failure
-            time.sleep(0.5)  # small retry delay
+                raise
+            time.sleep(0.5)
 
     return None
-
 
 # ----------------------------------------
 # Build item from TMDB details
@@ -44,7 +48,6 @@ def tmdb_get(path, **params):
 def build_item_from_tmdb(entry, kind):
     tmdb_id = entry["id"]
 
-    # FIX 3: delay between API calls
     time.sleep(0.3)
 
     details = tmdb_get(
@@ -55,6 +58,11 @@ def build_item_from_tmdb(entry, kind):
     if not details:
         return None
 
+    # Skip ended shows entirely
+    status_raw = details.get("status", "").lower()
+    if status_raw in ["ended", "canceled", "cancelled"]:
+        return None
+
     title = details.get("name") or details.get("title")
     url = f"https://www.themoviedb.org/{kind}/{tmdb_id}"
 
@@ -62,17 +70,14 @@ def build_item_from_tmdb(entry, kind):
     if details.get("poster_path"):
         poster = f"https://image.tmdb.org/t/p/w500{details['poster_path']}"
 
-    # Country
     country = None
     if "origin_country" in details and details["origin_country"]:
         country = details["origin_country"][0]
 
-    # Episode count (TV only)
     ep_total = None
     if kind == "tv":
         ep_total = details.get("number_of_episodes")
 
-    # Next episode info
     next_ep = details.get("next_episode_to_air")
     next_ep_number = None
     next_ep_date = None
@@ -87,11 +92,7 @@ def build_item_from_tmdb(entry, kind):
             except:
                 next_ep_date = air_date
 
-    # Status
-    status_raw = details.get("status", "").lower()
-    if status_raw in ["ended", "canceled", "cancelled"]:
-        status = "ended"
-    elif next_ep_number:
+    if next_ep_number:
         status = "ongoing"
     else:
         status = "upcoming"
@@ -108,48 +109,42 @@ def build_item_from_tmdb(entry, kind):
         "status": status,
     }
 
-
 # ----------------------------------------
-# Discover items by keyword
+# Discover items by TMDB keyword IDs
 # ----------------------------------------
 
-def discover_tagged(kind, keywords):
+def discover_by_keywords(kind, keyword_ids):
+    time.sleep(0.3)
+
+    data = tmdb_get(
+        f"/discover/{kind}",
+        with_keywords=keyword_ids,
+        include_adult=False,
+        sort_by="popularity.desc"
+    )
+
+    if not data or "results" not in data:
+        return []
+
     results = []
-
-    for kw in keywords:
-        # FIX 3: delay between calls
-        time.sleep(0.3)
-
-        data = tmdb_get(f"/search/{kind}", query=kw, include_adult=False)
-        if not data or "results" not in data:
-            continue
-
-        for entry in data["results"]:
-            item = build_item_from_tmdb(entry, kind)
-            if item:
-                results.append(item)
+    for entry in data["results"]:
+        item = build_item_from_tmdb(entry, kind)
+        if item:
+            results.append(item)
 
     return results
-
 
 # ----------------------------------------
 # Public fetchers
 # ----------------------------------------
 
-BL_KEYWORDS = [
-    "gay theme", "bl", "boys love", "lgbt romance", "mlm romance"
-]
-
-GL_KEYWORDS = [
-    "lesbian romance", "gl", "girls love", "wlw romance", "yuri"
-]
-
 def fetch_bl_items():
-    tv_items = discover_tagged("tv", BL_KEYWORDS)
-    movie_items = discover_tagged("movie", BL_KEYWORDS)
+    tv_items = discover_by_keywords("tv", BL_KEYWORDS)
+    movie_items = discover_by_keywords("movie", BL_KEYWORDS)
     return tv_items + movie_items
 
 def fetch_gl_items():
-    tv_items = discover_tagged("tv", GL_KEYWORDS)
-    movie_items = discover_tagged("movie", GL_KEYWORDS)
+    tv_items = discover_by_keywords("tv", GL_KEYWORDS)
+    movie_items = discover_by_keywords("movie", GL_KEYWORDS)
     return tv_items + movie_items
+

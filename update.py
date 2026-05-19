@@ -11,7 +11,13 @@ from state_manager import (
 )
 from post_to_discord import post_or_update
 
+PRIORITY_COUNTRIES = ["TH", "JP", "KR", "CN", "TW", "PH", "VN", "HK", "MY"]
+
 def sort_key(item):
+    # Priority: 0 = prioritized country, 1 = others
+    priority = 0 if item["country_code"] in PRIORITY_COUNTRIES else 1
+
+    # Parse next episode date
     if item["next_ep_date"]:
         try:
             dt = datetime.strptime(item["next_ep_date"], "%b %d, %Y")
@@ -19,7 +25,8 @@ def sort_key(item):
             dt = datetime.max
     else:
         dt = datetime.max
-    return (dt, item["title"].lower())
+
+    return (priority, dt, item["title"].lower())
 
 def process_feed(items, state, webhook_url, state_path):
     # Sort items

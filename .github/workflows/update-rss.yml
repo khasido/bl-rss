@@ -31,9 +31,12 @@ jobs:
 
       - name: Run updater
         env:
-          DISCORD_WEBHOOK_URL: ${{ secrets.DISCORD_WEBHOOK_URL }}
+          TMDB_API_KEY: ${{ secrets.TMDB_API_KEY }}
+          DISCORD_WEBHOOK_BL: ${{ secrets.DISCORD_WEBHOOK_BL }}
+          DISCORD_WEBHOOK_GL: ${{ secrets.DISCORD_WEBHOOK_GL }}
         run: |
           python update.py
+
 
       - name: Commit feed and state
         run: |

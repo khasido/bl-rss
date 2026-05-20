@@ -1,7 +1,6 @@
 # update.py — UPDATED FOR NEW AESTHETIC EMBEDS + PATCHED FETCHER
 import os
 from datetime import datetime, date
-
 from tmdb_fetcher import fetch_bl_items, fetch_gl_items
 from state_manager import (
     load_state, save_state, has_changed,

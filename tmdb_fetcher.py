@@ -10,10 +10,6 @@ BASE_URL = "https://api.themoviedb.org/3"
 SESSION = requests.Session()
 SESSION.headers.update({"Accept": "application/json"})
 
-# ---------------------------------------------------------
-# HARD‑CODED KEYWORD + NETWORK IDs (from your links)
-# ---------------------------------------------------------
-
 BL_KEYWORD_IDS = ["240305", "289844", "265777", "347855"]
 GL_KEYWORD_IDS = ["280003", "9833", "315382"]
 
@@ -21,17 +17,12 @@ OTHER_LGBT_KEYWORD_IDS = ["1862", "158718", "163037"]
 
 NETWORK_IDS = ["6316", "1974", "3266", "1784", "1671"]
 
-# Only shows from these countries are allowed
 PRIORITY_COUNTRIES = ["TH", "JP", "KR", "CN", "TW", "PH", "VN", "HK", "MY"]
 
-# Date window:
 TODAY = date.today()
 SIX_MONTHS_AGO = TODAY - timedelta(days=6 * 30)
 TWO_YEARS_AHEAD = TODAY + timedelta(days=2 * 365)
 
-# ---------------------------------------------------------
-# TMDB GET with retries + timeout
-# ---------------------------------------------------------
 
 def tmdb_get(path, **params):
     params["api_key"] = TMDB_API_KEY
@@ -52,9 +43,6 @@ def tmdb_get(path, **params):
 
     return None
 
-# ---------------------------------------------------------
-# Helpers
-# ---------------------------------------------------------
 
 def parse_date(dstr):
     if not dstr:
@@ -63,6 +51,7 @@ def parse_date(dstr):
         return datetime.strptime(dstr, "%Y-%m-%d").date()
     except Exception:
         return None
+
 
 def in_date_window(dstr):
     d = parse_date(dstr)
@@ -73,6 +62,7 @@ def in_date_window(dstr):
     if d > TWO_YEARS_AHEAD:
         return False
     return True
+
 
 def extract_keywords(details):
     kw_block = details.get("keywords") or {}
@@ -88,22 +78,15 @@ def extract_keywords(details):
 
     return []
 
+
 def extract_keyword_names(details):
     kws = extract_keywords(details)
     return {(k.get("name") or "").lower().strip() for k in kws if k.get("name")}
 
-def extract_network_ids(details):
-    nets = details.get("networks") or []
-    return {str(n.get("id")) for n in nets if n.get("id")}
-
-# ---------------------------------------------------------
-# BL / GL classification
-# ---------------------------------------------------------
 
 def classify_bl_gl(details, credits):
     kw_names = extract_keyword_names(details)
 
-    # BL / GL keyword name sets (lowercase)
     BL_NAMES = {
         "gay romance",
         "boys' love (bl)",
@@ -120,11 +103,9 @@ def classify_bl_gl(details, credits):
     has_bl = any(k in kw_names for k in BL_NAMES)
     has_gl = any(k in kw_names for k in GL_NAMES)
 
-    # Must have at least one BL or GL tag
     if not has_bl and not has_gl:
         return None
 
-    # Mixed case → decide by lead genders
     if has_bl and has_gl:
         cast = credits.get("cast") or []
         male_leads = [c for c in cast if c.get("gender") == 2][:2]
@@ -144,9 +125,6 @@ def classify_bl_gl(details, credits):
 
     return None
 
-# ---------------------------------------------------------
-# Season-level inspection for TV
-# ---------------------------------------------------------
 
 def analyze_season(tmdb_id, season_number):
     season = tmdb_get(f"/tv/{tmdb_id}/season/{season_number}")
@@ -193,9 +171,6 @@ def analyze_season(tmdb_id, season_number):
         "status": status,
     }
 
-# ---------------------------------------------------------
-# Build normalized item
-# ---------------------------------------------------------
 
 def build_item(entry, kind):
     tmdb_id = entry["id"]
@@ -212,7 +187,6 @@ def build_item(entry, kind):
 
     credits = details.get("credits") or {}
 
-    # Country filter
     if kind == "tv":
         origin = details.get("origin_country") or []
         country = origin[0] if origin else None
@@ -223,17 +197,14 @@ def build_item(entry, kind):
     if not country or country not in PRIORITY_COUNTRIES:
         return None
 
-    # Date window
     first_date_str = details.get("first_air_date") if kind == "tv" else details.get("release_date")
     if not in_date_window(first_date_str):
         return None
 
-    # BL / GL classification
     category = classify_bl_gl(details, credits)
     if category not in ("bl", "gl"):
         return None
 
-    # TV logic
     if kind == "tv":
         seasons = details.get("seasons") or []
         valid_seasons = [s for s in seasons if s.get("season_number", 0) > 0]
@@ -254,7 +225,6 @@ def build_item(entry, kind):
         ep_total = season_info["last_ep_number"]
 
     else:
-        # Movies
         d = parse_date(first_date_str)
         next_ep_number = None
         next_ep_date = None
@@ -286,16 +256,42 @@ def build_item(entry, kind):
         "category": category,
     }
 
-# ---------------------------------------------------------
-# Discover logic (Option B: BL OR GL OR Networks)
-# ---------------------------------------------------------
 
-def discover_candidates(kind, max_pages=5):
+def _discover_by_keywords(kind, max_pages=5):
     results = []
     seen_ids = set()
 
     keyword_ids = BL_KEYWORD_IDS + GL_KEYWORD_IDS
     keyword_query = "|".join(keyword_ids)
+
+    for page in range(1, max_pages + 1):
+        time.sleep(0.3)
+
+        params = {
+            "include_adult": False,
+            "sort_by": "popularity.desc",
+            "with_genres": "18,10749",
+            "page": page,
+            "with_keywords": keyword_query,
+        }
+
+        data = tmdb_get(f"/discover/{kind}", **params)
+        if not data or "results" not in data or not data["results"]:
+            break
+
+        for entry in data["results"]:
+            eid = entry["id"]
+            if eid in seen_ids:
+                continue
+            seen_ids.add(eid)
+            results.append(entry)
+
+    return results
+
+
+def _discover_by_networks(kind, max_pages=5):
+    results = []
+    seen_ids = set()
 
     network_query = "|".join(NETWORK_IDS)
 
@@ -307,7 +303,6 @@ def discover_candidates(kind, max_pages=5):
             "sort_by": "popularity.desc",
             "with_genres": "18,10749",
             "page": page,
-            "with_keywords": keyword_query,
             "with_networks": network_query,
         }
 
@@ -320,24 +315,41 @@ def discover_candidates(kind, max_pages=5):
             if eid in seen_ids:
                 continue
             seen_ids.add(eid)
-
-            item = build_item(entry, kind)
-            if item:
-                results.append(item)
+            results.append(entry)
 
     return results
 
-# ---------------------------------------------------------
-# Public fetchers
-# ---------------------------------------------------------
+
+def discover_candidates(kind, max_pages=5):
+    combined = []
+    seen_ids = set()
+
+    by_kw = _discover_by_keywords(kind, max_pages=max_pages)
+    by_net = _discover_by_networks(kind, max_pages=max_pages)
+
+    for entry in by_kw + by_net:
+        eid = entry["id"]
+        if eid in seen_ids:
+            continue
+        seen_ids.add(eid)
+        combined.append(entry)
+
+    results = []
+    for entry in combined:
+        item = build_item(entry, kind)
+        if item:
+            results.append(item)
+
+    return results
+
 
 def fetch_bl_items():
     tv_items = discover_candidates("tv")
     movie_items = discover_candidates("movie")
     return [i for i in tv_items + movie_items if i["category"] == "bl"]
 
+
 def fetch_gl_items():
     tv_items = discover_candidates("tv")
     movie_items = discover_candidates("movie")
     return [i for i in tv_items + movie_items if i["category"] == "gl"]
-

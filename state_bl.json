@@ -1,3 +1,16 @@
 {
-  "items": {}
+  "items": {
+    "290098": {
+      "next_ep_date": null,
+      "next_ep_number": null,
+      "status": "upcoming",
+      "discord_message_id": null
+    },
+    "372058": {
+      "next_ep_date": null,
+      "next_ep_number": null,
+      "status": "upcoming",
+      "discord_message_id": null
+    }
+  }
 }

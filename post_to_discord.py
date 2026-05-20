@@ -22,19 +22,43 @@ def build_embed(item):
     emoji = random.choice(SOFT_EMOJIS)
     title = f"✦ {item['title']} {emoji} ✦"
 
+    # -----------------------------
+    # RESTORED METADATA BLOCK
+    # -----------------------------
+    meta_lines = []
+
+    if item.get("country_code"):
+        meta_lines.append(f"**Country:** {item['country_code']}")
+
+    if item.get("category"):
+        meta_lines.append(f"**Category:** {item['category'].upper()}")
+
+    if item.get("status"):
+        meta_lines.append(f"**Status:** {item['status'].title()}")
+
+    if item.get("episode_count"):
+        meta_lines.append(f"**Episodes:** {item['episode_count']}")
+
+    if item.get("next_ep_date"):
+        meta_lines.append(f"**Next Episode:** {item['next_ep_date']}")
+
+    metadata = "\n".join(meta_lines)
+
+    # -----------------------------
+    # FINAL EMBED
+    # -----------------------------
     embed = {
         "title": title,
         "url": item["url"],
         "color": MINT_GREEN,
-        "description": shorten(item.get("overview", ""), 300),
-        "image": {"url": item["poster"]},  # TMDB URL — valid for Discord
+        "description": f"{metadata}\n\n{shorten(item.get('overview', ''), 300)}",
+        "image": {"url": item["poster"]},
         "footer": {"text": "Updated automatically • Kohei Feed"}
     }
 
     return embed
 
-
-# -----------------------------
+# ----------------------------
 # Discord API helpers
 # -----------------------------
 

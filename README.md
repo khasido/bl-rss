@@ -158,8 +158,8 @@ Generate RSS feeds
 Commit changes automatically
 
 🎨 Example Discord Embed
-```✦ Show Title 🌸 ✦
-
+```
+✦ Show Title 🌸 ✦
 Country: TH
 Category: BL
 Status: Ongoing

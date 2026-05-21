@@ -1,144 +1,195 @@
-# BL/GL TMDB Auto Feed Generator
+🌿 Kohei’s Feed — Automated BL/GL Airing Tracker
+TMDB‑Powered Discovery • Aesthetic Discord Embeds • Auto‑Generated RSS Feeds
+Kohei’s Feed is a fully automated system that discovers upcoming and ongoing Boys’ Love (BL) and Girls’ Love (GL) titles from TMDB, generates clean RSS feeds, and posts beautifully styled embeds to Discord — all without manual updates.
 
-This project generates **two separate RSS feeds** for BL and GL content using the TMDB API.  
-It supports **TV shows + movies**, uses **keywords + genres + country prioritization**, and integrates with **Wei Wei**, a custom Discord bot.
+This project is built for fans who want a soft, aesthetic, always‑up‑to‑date BL/GL airing feed.
 
-## ✨ Features
+----------------------------------------------------------------------------------------------------
 
-### ✔ TMDB-powered discovery
-- Searches TV + Movies
-- Uses BL/GL keyword sets
-- Prioritizes 9 major BL/GL-producing countries:
-  TH, JP, KR, CN, TW, PH, VN, HK, MY
-- Still includes global titles
+✨ What Kohei’s Feed Does
+🔍 Automatic BL/GL Discovery
+Scrapes TMDB keyword pages for BL/GL content
 
-### ✔ Clean status classification
-TMDB → Feed status:
-- Returning Series → ongoing  
-- In Production / Planned / Post Production / Pilot → upcoming  
-- Ended → excluded  
-- Canceled → excluded  
+Supports both TV shows and movies
 
-### ✔ Dual RSS feeds
-Generated files:
-- `feed_bl.xml` — BL-only feed  
-- `feed_gl.xml` — GL-only feed  
+Filters out:
 
-Each feed includes:
-- Poster  
-- Country  
-- Episode count  
-- Next episode number  
-- Next episode date  
-- Synopsis  
-- TMDB link  
-- Countdown-ready metadata  
+Ended shows
 
-### ✔ Blacklist integration
-Wei Wei maintains: data/blacklist.json
+Items without future episodes
 
-Format:
-```json
-{
-  "BL": ["title1", "title2"],
-  "GL": ["title3"]
-}
-``` 
+Titles outside the date window
 
-###The TMDB scraper automatically excludes blacklisted titles.
+Prioritizes Asian countries (TH, JP, KR, CN, etc.)
 
-✔ State tracking
-To prevent duplicate Discord posts:
+🧠 Smart Metadata Extraction
+Each title includes:
 
-state_bl.json
+Title
 
-state_gl.json
+Poster
 
-Only changed items trigger Discord embeds.
+Country
 
-✔ Discord posting
-Two webhooks:
+Category (BL/GL)
 
-DISCORD_WEBHOOK_BL
+Episode count
 
-DISCORD_WEBHOOK_GL
+Next episode number + date
 
-Each feed posts to its own channel.
+Clipped overview
 
-✔ GitHub Actions automation
-Runs every 6 minutes:
+TMDB link
 
-Fetches TMDB data
-
-Applies blacklist
-
-Builds feeds
-
-Updates state
-
-Posts to Discord
-
-Commits updated XML + JSON
-
-🔧 Setup
-1. Environment variables
-Set in GitHub Actions secrets:
-
-```TMDB_API_KEY=your_key_here
-DISCORD_WEBHOOK_BL=...
-DISCORD_WEBHOOK_GL=...
-```
-
-2. Blacklist file
-Create: data/blacklist.json
-With:
-```{
-  "BL": [],
-  "GL": []
-}
-```
-
-3. Install dependencies
-```pip install -r requirements.txt```
-
-4. Run manually
-```python update.py```
-
-GitHub Actions
-Workflow commits:
+📰 RSS Feed Generation
+Creates two feeds:
 
 ```feed_bl.xml
 
 feed_gl.xml
+```
+Each feed item includes:
 
-state_bl.json
+Poster image
+
+Country
+
+Episode count
+
+Next episode info
+
+Synopsis
+
+TMDB link
+
+💬 Aesthetic Discord Posting
+Posts soft, pastel‑themed embeds with:
+
+Mint green color
+
+Soft emojis
+
+Clean metadata block
+
+Poster image
+
+Shortened overview
+
+
+Messages update automatically when metadata changes.
+
+🗂 State Tracking
+Stored in:
+
+```state_bl.json
 
 state_gl.json
 ```
 
-📁 File Structure
-```update.py
-tmdb_fetcher.py
-rss_builder.py
-rss_parser.py
-state_manager.py
-post_to_discord.py
-data/
-   blacklist.json
-feed_bl.xml
-feed_gl.xml
-state_bl.json
-state_gl.json
+Tracks:
+
+Next episode date
+
+Next episode number
+
+Status
+
+Discord message ID
+
+Ensures no duplicates and correct ordering.
+
+🤖 Fully Automated via GitHub Actions
+Runs every 6 minutes:
+
+Discovers new titles
+
+Updates RSS feeds
+
+Updates Discord messages
+
+Commits changes back to the repo
+
+---------------------------------------------------------------------------------------------------
+
+📁 Project Structure
+```.
+├── update.py              # Main orchestrator
+├── tmdb_fetcher.py        # TMDB scraping + metadata builder
+├── rss_builder.py         # RSS feed generator
+├── rss_parser.py          # RSS parser (for Discord posting)
+├── post_to_discord.py     # Webhook embed builder + posting logic
+├── state_manager.py       # Persistent state tracking
+├── data/
+│   └── blacklist.json     # Optional blacklist for BL/GL filtering
+├── feed_bl.xml            # Generated BL RSS feed
+├── feed_gl.xml            # Generated GL RSS feed
+├── state_bl.json          # BL posted state
+├── state_gl.json          # GL posted state
+└── .github/workflows/
+    └── update-rss.yml     # Scheduled automation workflow
+```
+🚀 Setup
+1. Clone the repository
+```git clone https://github.com/<yourname>/<repo>.git
+cd <repo>
+```
+2. Install dependencies
+```pip install -r requirements.txt```
+3. Add GitHub Secrets
+Go to Settings → Secrets → Actions and add:
+
+Secret	           Description
+TMDB_API_KEY	      Your TMDB API key
+DISCORD_WEBHOOK_BL	Webhook for BL channel
+DISCORD_WEBHOOK_GL	Webhook for GL channel
+
+-------------------------------------------------------------------------------------------------------
+🧩 How It Works
+Scrape TMDB for BL/GL keyword pages
+
+Build metadata for each title
+
+Filter + sort by priority and next episode date
+
+Post or update Discord embeds
+
+Generate RSS feeds
+
+Commit changes automatically
+
+🎨 Example Discord Embed
+```✦ Show Title 🌸 ✦
+
+Country: TH
+Category: BL
+Status: Ongoing
+Episodes: 12
+Next Episode: May 23, 2026
+
+Shortened overview…
 ```
 
-🧩 Integration with Wei Wei
-Wei Wei provides:
+🛠 Customization
+Blacklist
+Add TMDB IDs to:
+```data/blacklist.json```
+Priority Countries
+Edit:
+```PRIORITY_COUNTRIES = ["TH", "JP", "KR", ...]```
+Aesthetic Theme
+Modify colors/emojis in:
+```post_to_discord.py```
 
-/blacklist-add
+-------------------------------------------------------------------------------------------------------
+❤️ Credits
+Built with:
 
-/blacklist-remove
+TMDB API
 
-/blacklist-list
+GitHub Actions
 
-These commands update data/blacklist.json.
-The TMDB scraper respects it automatically.
+Discord Webhooks
+
+Python 3.11
+
+Created for BL/GL fans who want a soft, modern, automated airing feed.
